@@ -1,72 +1,99 @@
 const mongoose = require("mongoose");
 const Score = require("../models/Score");
 const Quiz = require("../models/Quiz");
-const UserNew = require("../models/UserNew"); // Ensure correct import
+const UserNew = require("../models/UserNew"); // ✅ Ensure correct import
 
 // ✅ Submit Quiz and Calculate Score
 const submitQuiz = async (req, res) => {
   try {
+    console.log("🛠️ Received request body:", req.body);
+
     const { userId, quizTitle, selectedAnswers } = req.body;
 
-    if (!userId || !quizTitle || !Array.isArray(selectedAnswers)) {
-      return res.status(400).json({ message: "Invalid data format" });
+    if (!userId || !quizTitle || !selectedAnswers) {
+      console.error("❌ Missing required fields:", { userId, quizTitle, selectedAnswers });
+      return res.status(400).json({ message: "Missing required fields." });
     }
 
-    // Find the quiz by title
-    const quiz = await Quiz.findOne({ title: quizTitle }).populate("questions");
-
+    // ✅ Fetch the quiz
+    const quiz = await Quiz.findOne({ title: quizTitle });
     if (!quiz) {
-      return res.status(404).json({ message: "Quiz not found" });
+      console.error("❌ Quiz not found:", quizTitle);
+      return res.status(404).json({ message: "Quiz not found." });
     }
+    console.log("✅ Quiz found:", quiz._id);
 
-    let scoreValue = 0;
-    const feedback = {}; // Object to store feedback for each question
+    // ✅ Fetch the user (Fixed: Used `UserNew.findById` instead of `User.findById`)
+    const user = await UserNew.findById(userId);
+    if (!user) {
+      console.error("❌ User not found:", userId);
+      return res.status(404).json({ message: "User not found." });
+    }
+    console.log("✅ User found:", user._id);
 
-    selectedAnswers.forEach(({ questionId, selectedAnswer }) => {
-      const question = quiz.questions.find(q => q._id.toString() === String(questionId));
+    let newScore = 0;
+    let feedback = {};
 
-      if (question && question.correctAnswer) {
-        const correctAnswer = Array.isArray(question.correctAnswer)
-          ? question.correctAnswer.map(ans => ans?.toLowerCase().trim())
-          : [question.correctAnswer?.toLowerCase().trim()];
+    // ✅ Calculate score
+    quiz.questions.forEach((question) => {
+      const userAnswer = selectedAnswers.find((ans) => ans.questionId === question._id.toString());
 
-        const userResponse = Array.isArray(selectedAnswer)
-          ? selectedAnswer.map(ans => ans?.toLowerCase().trim())
-          : [selectedAnswer?.toLowerCase().trim()];
+      if (userAnswer) {
+        const correctAnswers = Array.isArray(question.correctAnswer)
+          ? question.correctAnswer
+          : [question.correctAnswer];
 
-        if (JSON.stringify(correctAnswer.sort()) === JSON.stringify(userResponse.sort())) {
-          scoreValue++;
-          feedback[questionId] = "✅ Your answer is correct!";
+        if (Array.isArray(userAnswer.selectedAnswer)) {
+          if (JSON.stringify(userAnswer.selectedAnswer.sort()) === JSON.stringify(correctAnswers.sort())) {
+            newScore += 1;
+            feedback[question._id] = "✅ Correct!";
+          } else {
+            feedback[question._id] = "❌ Incorrect. Try again!";
+          }
         } else {
-          feedback[questionId] = `❌ Your answer is wrong! The correct answer is: ${question.correctAnswer}`;
+          if (userAnswer.selectedAnswer === correctAnswers[0]) {
+            newScore += 1;
+            feedback[question._id] = "✅ Correct!";
+          } else {
+            feedback[question._id] = `❌ Incorrect. The correct answer is: ${correctAnswers[0]}`;
+          }
         }
       }
     });
 
-    // Save the score to the database
-    const newScore = await Score.create({
-      user: userId,
-      quizId: quiz._id,
-      score: scoreValue,
-    });
+    console.log("🔢 Calculated Score:", newScore);
 
-    // Send the response back with score and feedback
-    res.json({ message: "Quiz submitted successfully", score: scoreValue, feedback });
+    // ✅ Check if a score entry already exists for this user and quiz
+    let existingScore = await Score.findOne({ user: user._id, quizId: quiz._id });
+
+    if (existingScore) {
+      console.log("📌 Updating existing score:", existingScore._id);
+      existingScore.score = newScore;
+      await existingScore.save();
+    } else {
+      console.log("🆕 Creating new score entry");
+      existingScore = new Score({
+        user: user._id,   // ✅ Ensure `user` is stored properly
+        quizId: quiz._id, // ✅ Ensure `quizId` is stored properly
+        score: newScore,
+      });
+      await existingScore.save();
+    }
+
+    console.log("✅ Score saved successfully:", existingScore);
+
+    res.json({ score: existingScore.score, feedback });
   } catch (error) {
-    res.status(500).json({ message: `Error submitting quiz: ${error.message}` });
+    console.error("❌ Server error during quiz submission:", error);
+    res.status(500).json({ message: "Server error.", error: error.message });
   }
 };
-
-
-
-
-
 
 // ✅ Fetch scores for a specific user
 const getUserScores = async (req, res) => {
   try {
     const { userId } = req.params;
-    
+
     if (!mongoose.Types.ObjectId.isValid(userId) && userId !== "all") {
       return res.status(400).json({ message: "Invalid user ID format" });
     }
