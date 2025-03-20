@@ -23,7 +23,7 @@ const submitQuiz = async (req, res) => {
     }
     console.log("✅ Quiz found:", quiz._id);
 
-    // ✅ Fetch the user (Fixed: Used `UserNew.findById` instead of `User.findById`)
+    // ✅ Fetch the user
     const user = await UserNew.findById(userId);
     if (!user) {
       console.error("❌ User not found:", userId);
@@ -33,29 +33,32 @@ const submitQuiz = async (req, res) => {
 
     let newScore = 0;
     let feedback = {};
+    let correctAnswers = []; // ✅ Store correct answers to return in response
 
-    // ✅ Calculate score
+    // ✅ Calculate score & collect correct answers
     quiz.questions.forEach((question) => {
       const userAnswer = selectedAnswers.find((ans) => ans.questionId === question._id.toString());
 
-      if (userAnswer) {
-        const correctAnswers = Array.isArray(question.correctAnswer)
-          ? question.correctAnswer
-          : [question.correctAnswer];
+      const correctAnswerList = Array.isArray(question.correctAnswer)
+        ? question.correctAnswer
+        : [question.correctAnswer];
 
+      correctAnswers.push({ questionId: question._id, correctAnswer: correctAnswerList });
+
+      if (userAnswer) {
         if (Array.isArray(userAnswer.selectedAnswer)) {
-          if (JSON.stringify(userAnswer.selectedAnswer.sort()) === JSON.stringify(correctAnswers.sort())) {
+          if (JSON.stringify(userAnswer.selectedAnswer.sort()) === JSON.stringify(correctAnswerList.sort())) {
             newScore += 1;
             feedback[question._id] = "✅ Correct!";
           } else {
             feedback[question._id] = "❌ Incorrect. Try again!";
           }
         } else {
-          if (userAnswer.selectedAnswer === correctAnswers[0]) {
+          if (userAnswer.selectedAnswer === correctAnswerList[0]) {
             newScore += 1;
             feedback[question._id] = "✅ Correct!";
           } else {
-            feedback[question._id] = `❌ Incorrect. The correct answer is: ${correctAnswers[0]}`;
+            feedback[question._id] = `❌ Incorrect. The correct answer is: ${correctAnswerList[0]}`;
           }
         }
       }
@@ -63,7 +66,7 @@ const submitQuiz = async (req, res) => {
 
     console.log("🔢 Calculated Score:", newScore);
 
-    // ✅ Check if a score entry already exists for this user and quiz
+    // ✅ Check if a score entry already exists
     let existingScore = await Score.findOne({ user: user._id, quizId: quiz._id });
 
     if (existingScore) {
@@ -73,8 +76,8 @@ const submitQuiz = async (req, res) => {
     } else {
       console.log("🆕 Creating new score entry");
       existingScore = new Score({
-        user: user._id,   // ✅ Ensure `user` is stored properly
-        quizId: quiz._id, // ✅ Ensure `quizId` is stored properly
+        user: user._id,
+        quizId: quiz._id,
         score: newScore,
       });
       await existingScore.save();
@@ -82,12 +85,14 @@ const submitQuiz = async (req, res) => {
 
     console.log("✅ Score saved successfully:", existingScore);
 
-    res.json({ score: existingScore.score, feedback });
+    // ✅ Return correct answers along with score & feedback
+    res.json({ score: existingScore.score, feedback, correctAnswers });
   } catch (error) {
     console.error("❌ Server error during quiz submission:", error);
     res.status(500).json({ message: "Server error.", error: error.message });
   }
 };
+
 
 // ✅ Fetch scores for a specific user
 const getUserScores = async (req, res) => {
